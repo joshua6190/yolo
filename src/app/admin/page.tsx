@@ -334,7 +334,7 @@ export default function AdminPage() {
       if (ordsError) throw ordsError;
 
       if (cats && cats.length > 0) {
-        const settingsRow = cats.find(c => c.id === "system_settings");
+        const settingsRow = cats.find((c: any) => c.id === "system_settings");
         if (settingsRow) {
           try {
             const settingsObj = JSON.parse(settingsRow.label);
@@ -350,7 +350,7 @@ export default function AdminPage() {
             console.error("Failed to parse system settings row:", e);
           }
         }
-        const filteredCats = cats.filter(c => c.id !== "system_settings");
+        const filteredCats = cats.filter((c: any) => c.id !== "system_settings");
         setCategories(filteredCats);
       } else {
         const cleanDefaultCats = defaultCategories.map(c => ({ id: c.id, label: c.label }));
@@ -379,7 +379,7 @@ export default function AdminPage() {
       }
 
       if (ords) {
-        const mappedOrders: StoredOrder[] = ords.map(o => ({
+        const mappedOrders: StoredOrder[] = ords.map((o: any) => ({
           id: o.id,
           pin: o.pin,
           mode: o.mode,
@@ -717,7 +717,7 @@ export default function AdminPage() {
       // Reload
       const { data: ords } = await supabase.from("yolo_orders").select("*").order("created_at", { ascending: false });
       if (ords) {
-        const mappedOrders: StoredOrder[] = ords.map(o => ({
+        const mappedOrders: StoredOrder[] = ords.map((o: any) => ({
           id: o.id,
           pin: o.pin,
           mode: o.mode,
