@@ -15,11 +15,11 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://yolobites.ng"),
+  metadataBase: new URL("https://www.yolobites.com"),
   title: "YOLO BITES | Taste It. Love It. Live It. - Kaduna's Premium Restaurant",
   description: "Experience the perfect blend of luxury, comfort, and unforgettable flavours at Kaduna's newest premium food destination. Fresh pizzas, gourmet burgers, Shawarmas, parfaits, and mocktails at Barnawa.",
   keywords: "YOLO BITES, Restaurant Kaduna, Barnawa restaurants, premium food, luxury dining Kaduna, pizza Kaduna, burger Barnawa, Mocktails Kaduna, food destination Nigeria, order food online Kaduna",
-  authors: [{ name: "YOLO BITES", url: "https://yolobites.ng" }],
+  authors: [{ name: "YOLO BITES", url: "https://www.yolobites.com" }],
   alternates: {
     canonical: "/",
   },
@@ -37,7 +37,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "YOLO BITES | Taste It. Love It. Live It.",
     description: "Discover the perfect blend of flavour, comfort, and unforgettable moments at Kaduna’s newest premium food destination.",
-    url: "https://yolobites.ng",
+    url: "https://www.yolobites.com",
     siteName: "YOLO BITES",
     images: [
       {
