@@ -15,9 +15,25 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://yolobites.ng"),
   title: "YOLO BITES | Taste It. Love It. Live It. - Kaduna's Premium Restaurant",
   description: "Experience the perfect blend of luxury, comfort, and unforgettable flavours at Kaduna's newest premium food destination. Fresh pizzas, gourmet burgers, Shawarmas, parfaits, and mocktails at Barnawa.",
-  keywords: "YOLO BITES, Restaurant Kaduna, Barnawa restaurants, premium food, luxury dining Kaduna, pizza Kaduna, burger Barnawa, Mocktails Kaduna, food destination Nigeria",
+  keywords: "YOLO BITES, Restaurant Kaduna, Barnawa restaurants, premium food, luxury dining Kaduna, pizza Kaduna, burger Barnawa, Mocktails Kaduna, food destination Nigeria, order food online Kaduna",
+  authors: [{ name: "YOLO BITES", url: "https://yolobites.ng" }],
+  alternates: {
+    canonical: "/",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
   openGraph: {
     title: "YOLO BITES | Taste It. Love It. Live It.",
     description: "Discover the perfect blend of flavour, comfort, and unforgettable moments at Kaduna’s newest premium food destination.",
@@ -40,6 +56,13 @@ export const metadata: Metadata = {
     description: "You Only Live Once. Make It Delicious. Visit us in Barnawa, Kaduna South.",
     images: ["/images/background.png"],
   },
+};
+
+export const viewport = {
+  themeColor: "#050505",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
 };
 
 export default function RootLayout({
