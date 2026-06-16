@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, ChefHat } from "lucide-react";
 import Link from "next/link";
@@ -57,6 +57,72 @@ export default function OrderFlow() {
   const [deliveryInfo, setDeliveryInfo]   = useState<DeliveryInfo | null>(null);
   const [orderRef]                        = useState(genRef);
   const [pin]                             = useState(() => Math.floor(1000 + Math.random() * 9000).toString());
+  const [taxRate, setTaxRate]             = useState<number>(0);
+  const [isStoreOpen, setIsStoreOpen]     = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("yolo_store_open");
+      if (stored !== null) {
+        try {
+          return JSON.parse(stored);
+        } catch {
+          return true;
+        }
+      }
+    }
+    return true;
+  });
+  const [loadingSettings, setLoadingSettings] = useState<boolean>(true);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const storedTax = localStorage.getItem("yolo_tax_rate");
+      if (storedTax) {
+        const parsed = parseFloat(storedTax);
+        if (!isNaN(parsed)) setTaxRate(parsed);
+      }
+      const storedStore = localStorage.getItem("yolo_store_open");
+      if (storedStore !== null) {
+        try {
+          setIsStoreOpen(JSON.parse(storedStore));
+        } catch {}
+      }
+    }
+    const fetchLiveSettings = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("yolo_categories")
+          .select("*")
+          .eq("id", "system_settings");
+        
+        if (data && data.length > 0 && !error) {
+          const settings = JSON.parse(data[0].label);
+          if (settings) {
+            if (typeof settings.taxRate === "number") {
+              setTaxRate(settings.taxRate);
+              localStorage.setItem("yolo_tax_rate", String(settings.taxRate));
+            }
+            if (typeof settings.storeOpen === "boolean") {
+              setIsStoreOpen(settings.storeOpen);
+              localStorage.setItem("yolo_store_open", JSON.stringify(settings.storeOpen));
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load settings in OrderFlow:", err);
+      } finally {
+        setLoadingSettings(false);
+      }
+    };
+    fetchLiveSettings();
+  }, []);
+
+  // Scroll to top on step transition
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.scrollTo(0, 0);
+    }
+  }, [step]);
 
   /* ── Navigation helpers ───────────────────────── */
   const currentPerson = persons[currentPersonIdx] as PersonOrder | undefined;
@@ -121,7 +187,10 @@ export default function OrderFlow() {
     setPaymentMethod(method);
 
     const allItems = mode === "dine-in" ? persons.flatMap((p) => p.cart) : deliveryCart;
-    const totalAmount = allItems.reduce((s, c) => s + c.price * c.quantity, 0);
+    const subtotal = allItems.reduce((s, c) => s + c.price * c.quantity, 0);
+    const activeTaxRate = mode === "delivery" ? taxRate : 0;
+    const taxAmount = parseFloat((subtotal * (activeTaxRate / 100)).toFixed(2));
+    const totalAmount = subtotal + taxAmount;
 
     const newOrder = {
       id: orderRef,
@@ -136,26 +205,42 @@ export default function OrderFlow() {
       status: "pending",
       totalAmount,
       timestamp: new Date().toISOString(),
+      taxRate: activeTaxRate,
+      taxAmount
     };
 
     // Save to Supabase
     const supabase = createClient();
+    const insertPayload: any = {
+      id: newOrder.id,
+      pin: newOrder.pin,
+      mode: newOrder.mode,
+      table_number: newOrder.tableNumber,
+      person_count: newOrder.personCount,
+      persons: newOrder.persons,
+      delivery_cart: newOrder.deliveryCart,
+      delivery_info: newOrder.deliveryInfo,
+      payment_method: newOrder.paymentMethod,
+      status: newOrder.status,
+      total_amount: newOrder.totalAmount,
+      created_at: newOrder.timestamp,
+      tax_rate: newOrder.taxRate,
+      tax_amount: newOrder.taxAmount
+    };
+
     try {
-      const { error } = await supabase.from("yolo_orders").insert({
-        id: newOrder.id,
-        pin: newOrder.pin,
-        mode: newOrder.mode,
-        table_number: newOrder.tableNumber,
-        person_count: newOrder.personCount,
-        persons: newOrder.persons,
-        delivery_cart: newOrder.deliveryCart,
-        delivery_info: newOrder.deliveryInfo,
-        payment_method: newOrder.paymentMethod,
-        status: newOrder.status,
-        total_amount: newOrder.totalAmount,
-        created_at: newOrder.timestamp
-      });
-      if (error) throw error;
+      const { error } = await supabase.from("yolo_orders").insert(insertPayload);
+      if (error) {
+        // If column missing (PostgREST code 42703 or message indicates column), retry without tax columns
+        if (error.message?.includes("column") || error.code === "42703") {
+          console.warn("yolo_orders missing tax columns, retrying insert without them...");
+          const { tax_rate, tax_amount, ...fallbackPayload } = insertPayload;
+          const { error: retryError } = await supabase.from("yolo_orders").insert(fallbackPayload);
+          if (retryError) throw retryError;
+        } else {
+          throw error;
+        }
+      }
     } catch (err: any) {
       const formatted = formatError(err);
       console.error(`Error inserting order to Supabase, falling back to localStorage: ${formatted.message || (typeof formatted === "string" ? formatted : JSON.stringify(formatted))}`, formatted);
@@ -207,6 +292,64 @@ export default function OrderFlow() {
 
   /* ── Slide direction ──────────────────────────── */
   const slideIn = { initial: { opacity: 0, x: 30 }, animate: { opacity: 1, x: 0 }, exit: { opacity: 0, x: -30 }, transition: { duration: 0.28 } };
+
+  if (loadingSettings) {
+    return (
+      <div className="min-h-screen bg-deep-black text-warm-ivory flex flex-col items-center justify-center">
+        <ChefHat className="w-12 h-12 text-luxury-gold animate-bounce mb-4" />
+        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-warm-ivory/50">
+          Entering Experience...
+        </p>
+      </div>
+    );
+  }
+
+  if (!isStoreOpen) {
+    return (
+      <div className="min-h-screen bg-deep-black text-warm-ivory flex flex-col">
+        {/* Navbar */}
+        <header className="sticky top-0 z-40 glass-nav px-5 md:px-12 py-4 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2.5 group">
+            <div className="w-9 h-9 rounded-full overflow-hidden border border-luxury-gold/60">
+              <img src="/images/logo.jpeg" alt="YOLO BITES" className="w-full h-full object-cover" />
+            </div>
+            <span className="font-serif text-base font-bold tracking-widest text-white group-hover:text-luxury-gold transition-colors">
+              YOLO BITES
+            </span>
+          </Link>
+          <div className="flex items-center gap-1.5 text-xs text-warm-ivory/40 font-medium">
+            <ChefHat className="w-4 h-4 text-luxury-gold" />
+            <span className="hidden sm:inline">Order Experience</span>
+          </div>
+        </header>
+
+        <main className="flex-1 flex items-center justify-center p-6 text-center">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.4 }}
+            className="w-full max-w-md glass-card border border-luxury-gold/20 bg-luxury-gold/[0.01] rounded-3xl p-8 md:p-10 shadow-2xl flex flex-col items-center"
+          >
+            <div className="w-16 h-16 rounded-full bg-luxury-gold/10 border border-luxury-gold/30 flex items-center justify-center mb-6 text-luxury-gold">
+              <ChefHat className="w-8 h-8 animate-pulse" />
+            </div>
+            <h2 className="font-serif text-2xl md:text-3xl font-bold text-white mb-4">
+              We are Closed
+            </h2>
+            <p className="text-warm-ivory/70 text-sm md:text-base font-light leading-relaxed mb-8">
+              Apologies for the inconvenience, but we are currently closed for orders. Kindly check back and place your order during our business hours.
+            </p>
+            <Link
+              href="/"
+              className="w-full py-4 bg-luxury-gold hover:bg-luxury-gold/90 text-deep-black rounded-full font-bold uppercase tracking-wider text-xs transition duration-300 hover:scale-105 text-center shadow-[0_4px_15px_rgba(212,175,55,0.25)] cursor-pointer"
+            >
+              Back to Home
+            </Link>
+          </motion.div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-deep-black text-warm-ivory">

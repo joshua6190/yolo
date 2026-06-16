@@ -70,7 +70,8 @@ export default function StepMenu({
         if (menuError) throw menuError;
 
         if (cats && cats.length > 0) {
-          setLocalCategories(cats);
+          const filtered = cats.filter((c: any) => c.id !== "system_settings");
+          setLocalCategories(filtered);
         }
         if (menu && menu.length > 0) {
           const normalized = normalizeMenu(menu);
@@ -98,7 +99,9 @@ export default function StepMenu({
 
         const storedCats = localStorage.getItem("yolo_categories");
         if (storedCats) {
-          setLocalCategories(JSON.parse(storedCats));
+          const parsed = JSON.parse(storedCats);
+          const filtered = parsed.filter((c: any) => c.id !== "system_settings");
+          setLocalCategories(filtered);
         } else {
           setLocalCategories(categories);
         }

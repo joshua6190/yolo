@@ -50,7 +50,8 @@ export default function FeaturedMenu() {
         if (menuError) throw menuError;
 
         if (cats && cats.length > 0) {
-          setLocalCategories(cats);
+          const filtered = cats.filter((c: any) => c.id !== "system_settings");
+          setLocalCategories(filtered);
         } else {
           // Auto-seed if database is clean
           const cleanDefaultCats = defaultCategories.map(c => ({ id: c.id, label: c.label }));
@@ -100,7 +101,9 @@ export default function FeaturedMenu() {
 
         const storedCats = localStorage.getItem("yolo_categories");
         if (storedCats) {
-          setLocalCategories(JSON.parse(storedCats));
+          const parsed = JSON.parse(storedCats);
+          const filtered = parsed.filter((c: any) => c.id !== "system_settings");
+          setLocalCategories(filtered);
         } else {
           setLocalCategories(defaultCategories);
         }

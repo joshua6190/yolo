@@ -66,6 +66,8 @@ interface StoredOrder {
   status: "pending" | "preparing" | "completed" | "cancelled";
   totalAmount: number;
   timestamp: string;
+  taxRate?: number;
+  taxAmount?: number;
 }
 
 const getNumericPrice = (p: any): number => {
@@ -116,6 +118,7 @@ export default function AdminPage() {
   // New states for printing, filtering and alerts
   const [newOrderAlert, setNewOrderAlert] = useState<StoredOrder | null>(null);
   const knownOrderIds = useRef<Set<string>>(new Set());
+  const stickyNotificationRef = useRef<Notification | null>(null);
 
   // Filters and sorting for menu items showcase
   const [menuSearchQuery, setMenuSearchQuery] = useState("");
@@ -127,6 +130,8 @@ export default function AdminPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authError, setAuthError] = useState("");
   const [showPasscode, setShowPasscode] = useState(false);
+  const [taxRate, setTaxRate] = useState<number>(0);
+  const [notificationPermission, setNotificationPermission] = useState<string>("default");
 
   const playNotificationSound = () => {
     try {
@@ -160,6 +165,9 @@ export default function AdminPage() {
       ? order.persons.flatMap(p => p.cart)
       : order.deliveryCart;
     const totalQty = allItems.reduce((s, c) => s + c.quantity, 0);
+    const subtotal = allItems.reduce((s, c) => s + c.price * c.quantity, 0);
+    const orderTaxRate = (order.mode === "delivery" && order.taxRate !== undefined) ? order.taxRate : 0;
+    const orderTaxAmount = orderTaxRate > 0 ? (order.taxAmount !== undefined ? order.taxAmount : (order.totalAmount - subtotal > 0 ? order.totalAmount - subtotal : 0)) : 0;
 
     const formattedDate = new Date(order.timestamp).toLocaleString("en-US", {
       dateStyle: "medium",
@@ -285,6 +293,16 @@ export default function AdminPage() {
               <span>Total Qty:</span>
               <span>${totalQty}</span>
             </div>
+            ${orderTaxRate > 0 ? `
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 4px;">
+              <span>Subtotal:</span>
+              <span>₦${subtotal.toLocaleString("en-NG")}</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 12px; margin-top: 2px;">
+              <span>Tax / VAT (${orderTaxRate}%):</span>
+              <span>₦${orderTaxAmount.toLocaleString("en-NG")}</span>
+            </div>
+            ` : ""}
             <div class="total-row">
               <span>GRAND TOTAL</span>
               <span>₦${order.totalAmount.toLocaleString("en-NG")}</span>
@@ -346,6 +364,10 @@ export default function AdminPage() {
               setStoreOpen(settingsObj.storeOpen);
               localStorage.setItem("yolo_store_open", JSON.stringify(settingsObj.storeOpen));
             }
+            if (settingsObj.taxRate !== undefined) {
+              setTaxRate(settingsObj.taxRate);
+              localStorage.setItem("yolo_tax_rate", String(settingsObj.taxRate));
+            }
           } catch (e) {
             console.error("Failed to parse system settings row:", e);
           }
@@ -391,22 +413,56 @@ export default function AdminPage() {
           paymentMethod: o.payment_method,
           status: o.status,
           totalAmount: getNumericPrice(o.total_amount),
-          timestamp: o.created_at || o.timestamp
+          timestamp: o.created_at || o.timestamp,
+          taxRate: o.tax_rate !== undefined && o.tax_rate !== null ? getNumericPrice(o.tax_rate) : 0,
+          taxAmount: o.tax_amount !== undefined && o.tax_amount !== null ? getNumericPrice(o.tax_amount) : 0
         }));
 
-        // Trigger sound and modal alert for brand new pending orders
+        // Trigger standard modal alert on screen only for brand new orders
         if (knownOrderIds.current.size > 0) {
           const newOrders = mappedOrders.filter(o => !knownOrderIds.current.has(o.id));
           if (newOrders.length > 0) {
             const newestPending = newOrders.find(o => o.status === "pending");
             if (newestPending) {
               setNewOrderAlert(newestPending);
-              playNotificationSound();
             }
             newOrders.forEach(o => knownOrderIds.current.add(o.id));
           }
         } else {
           mappedOrders.forEach(o => knownOrderIds.current.add(o.id));
+        }
+
+        // Sticky system notifications & sound alert based on any active pending orders
+        const pendingOrders = mappedOrders.filter(o => o.status === "pending");
+        if (pendingOrders.length > 0) {
+          playNotificationSound();
+
+          if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+            try {
+              const bodyText = pendingOrders.length === 1
+                ? `Order #${pendingOrders[0].id} (${pendingOrders[0].mode === "delivery" ? "Delivery" : `Table ${pendingOrders[0].tableNumber}`}) is waiting for review.`
+                : `You have ${pendingOrders.length} pending orders waiting for review. Click to inspect.`;
+
+              if (stickyNotificationRef.current) {
+                stickyNotificationRef.current.close();
+              }
+
+              stickyNotificationRef.current = new Notification("🔔 Pending Orders Alert", {
+                body: bodyText,
+                icon: "/images/logo.jpeg",
+                tag: "yolo-pending-orders",
+                requireInteraction: true
+              });
+            } catch (err) {
+              console.error("Failed to display sticky notification:", err);
+            }
+          }
+        } else {
+          // Dismiss sticky notification if no pending orders remain
+          if (stickyNotificationRef.current) {
+            stickyNotificationRef.current.close();
+            stickyNotificationRef.current = null;
+          }
         }
 
         setOrders(mappedOrders);
@@ -466,10 +522,43 @@ export default function AdminPage() {
 
     const storedTables = localStorage.getItem("yolo_tables_count");
     if (storedTables) setTablesCount(parseInt(storedTables) || 6);
+
+    const storedTaxRate = localStorage.getItem("yolo_tax_rate");
+    if (storedTaxRate) setTaxRate(parseFloat(storedTaxRate) || 0);
+
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotificationPermission(Notification.permission);
+    }
+
+    return () => {
+      if (stickyNotificationRef.current) {
+        stickyNotificationRef.current.close();
+      }
+    };
   }, []);
 
   useEffect(() => {
     if (!isAuthenticated) return;
+
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotificationPermission(Notification.permission);
+      if (Notification.permission === "default") {
+        Notification.requestPermission().then((res) => {
+          setNotificationPermission(res);
+          if (res === "granted") {
+            try {
+              new Notification("🍕 Notifications Enabled", {
+                body: "You will now receive desktop notifications for new orders!",
+                icon: "/images/logo.jpeg"
+              });
+            } catch (e) {
+              console.error(e);
+            }
+          }
+        });
+      }
+    }
+
     const interval = setInterval(() => {
       loadAllData();
     }, 10000);
@@ -493,13 +582,14 @@ export default function AdminPage() {
     setPasscode("");
   };
 
-  const syncSystemSettings = async (newTablesCount: number, newStoreOpen: boolean) => {
+  const syncSystemSettings = async (newTablesCount: number, newStoreOpen: boolean, newTaxRate?: number) => {
     const supabase = createClient();
+    const activeTaxRate = newTaxRate !== undefined ? newTaxRate : taxRate;
     try {
       await supabase.from("yolo_categories").delete().eq("id", "system_settings");
       await supabase.from("yolo_categories").insert({
         id: "system_settings",
-        label: JSON.stringify({ tablesCount: newTablesCount, storeOpen: newStoreOpen })
+        label: JSON.stringify({ tablesCount: newTablesCount, storeOpen: newStoreOpen, taxRate: activeTaxRate })
       });
     } catch (err) {
       console.error("Failed to sync system settings to database:", err);
@@ -543,6 +633,20 @@ export default function AdminPage() {
     setStoreOpen(nextVal);
     localStorage.setItem("yolo_store_open", JSON.stringify(nextVal));
     syncSystemSettings(tablesCount, nextVal);
+  };
+
+  const handleIncrementTax = () => {
+    const nextVal = parseFloat(Math.min(100, taxRate + 0.5).toFixed(2));
+    setTaxRate(nextVal);
+    localStorage.setItem("yolo_tax_rate", String(nextVal));
+    syncSystemSettings(tablesCount, storeOpen, nextVal);
+  };
+
+  const handleDecrementTax = () => {
+    const nextVal = parseFloat(Math.max(0, taxRate - 0.5).toFixed(2));
+    setTaxRate(nextVal);
+    localStorage.setItem("yolo_tax_rate", String(nextVal));
+    syncSystemSettings(tablesCount, storeOpen, nextVal);
   };
 
   // ── Seeding and Reset ───────────────────────────────────────────
@@ -729,7 +833,9 @@ export default function AdminPage() {
           paymentMethod: o.payment_method,
           status: o.status,
           totalAmount: getNumericPrice(o.total_amount),
-          timestamp: o.created_at || o.timestamp
+          timestamp: o.created_at || o.timestamp,
+          taxRate: o.tax_rate !== undefined && o.tax_rate !== null ? getNumericPrice(o.tax_rate) : 0,
+          taxAmount: o.tax_amount !== undefined && o.tax_amount !== null ? getNumericPrice(o.tax_amount) : 0
         }));
         setOrders(mappedOrders);
       }
@@ -778,6 +884,40 @@ export default function AdminPage() {
         localStorage.setItem("yolo_store_open", "true");
         alert("System reset in local storage fallback!");
       }
+    }
+  };
+
+  const clearOrderHistory = async () => {
+    const password = prompt("Enter passcode to confirm clearing all order history:");
+    if (password === null) return;
+    if (password !== "Reg4social@123#") {
+      alert("Verification failed: Incorrect security passcode.");
+      return;
+    }
+
+    const supabase = createClient();
+    try {
+      const { error } = await supabase.from("yolo_orders").delete().neq("id", "placeholder");
+      if (error) throw error;
+
+      setOrders([]);
+      localStorage.removeItem("yolo_orders");
+      knownOrderIds.current = new Set();
+      if (stickyNotificationRef.current) {
+        stickyNotificationRef.current.close();
+        stickyNotificationRef.current = null;
+      }
+      alert("All order history cleared successfully!");
+    } catch (err) {
+      console.error("Error clearing orders from Supabase, falling back to local clear:", err);
+      setOrders([]);
+      localStorage.removeItem("yolo_orders");
+      knownOrderIds.current = new Set();
+      if (stickyNotificationRef.current) {
+        stickyNotificationRef.current.close();
+        stickyNotificationRef.current = null;
+      }
+      alert("Order history cleared from local fallback (Supabase query failed).");
     }
   };
 
@@ -1410,6 +1550,8 @@ CREATE TABLE IF NOT EXISTS public.yolo_orders (
     payment_method text NOT NULL,
     status text DEFAULT 'pending'::text,
     total_amount numeric NOT NULL,
+    tax_rate numeric DEFAULT 0,
+    tax_amount numeric DEFAULT 0,
     created_at timestamp with time zone DEFAULT now()
 );
 
@@ -1465,6 +1607,8 @@ CREATE TABLE IF NOT EXISTS public.yolo_orders (
     payment_method text NOT NULL,
     status text DEFAULT 'pending'::text,
     total_amount numeric NOT NULL,
+    tax_rate numeric DEFAULT 0,
+    tax_amount numeric DEFAULT 0,
     created_at timestamp with time zone DEFAULT now()
 );
 
@@ -2007,6 +2151,12 @@ CREATE POLICY "Allow public delete" ON public.yolo_orders FOR DELETE USING (true
                       <div className="md:w-56 flex flex-col justify-between items-end gap-4 shrink-0 text-right self-stretch">
                         
                         <div>
+                          {order.mode === "delivery" && order.taxRate !== undefined && order.taxRate > 0 && (
+                            <div className="text-right text-[10px] text-warm-ivory/50 space-y-0.5 mb-1.5 font-mono">
+                              <div>Subtotal: {formatPrice(order.totalAmount - (order.taxAmount || 0))}</div>
+                              <div>VAT ({order.taxRate}%): {formatPrice(order.taxAmount || 0)}</div>
+                            </div>
+                          )}
                           <p className="text-[9px] font-semibold text-warm-ivory/40 uppercase tracking-wider mb-0.5">Grand Total</p>
                           <p className="font-serif font-bold text-2xl text-luxury-gold text-neon-gold">
                             {formatPrice(order.totalAmount)}
@@ -2539,6 +2689,79 @@ CREATE POLICY "Allow public delete" ON public.yolo_orders FOR DELETE USING (true
                   </div>
                 </div>
 
+                {/* VAT / Tax Percentage setup */}
+                <div className="flex items-center justify-between p-5 bg-white/[0.02] border border-white/5 rounded-2xl hover:border-white/10 transition-colors">
+                  <div className="space-y-1">
+                    <p className="font-semibold text-sm text-white">VAT / Tax Percentage (%)</p>
+                    <p className="text-xs text-warm-ivory/40 max-w-sm">Configure the VAT / tax percentage rate applied to client orders at checkout.</p>
+                  </div>
+                  <div className="flex items-center gap-3.5 bg-deep-black/60 border border-white/10 px-4 py-2 rounded-xl shrink-0">
+                    <button
+                      onClick={handleDecrementTax}
+                      disabled={taxRate <= 0}
+                      className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white font-bold flex items-center justify-center transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      -
+                    </button>
+                    <span className="font-serif text-lg font-bold text-luxury-gold w-14 text-center select-none font-mono">
+                      {taxRate}%
+                    </span>
+                    <button
+                      onClick={handleIncrementTax}
+                      disabled={taxRate >= 100}
+                      className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white font-bold flex items-center justify-center transition disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                {/* Desktop System Notifications Control */}
+                <div className="flex items-center justify-between p-5 bg-white/[0.02] border border-white/5 rounded-2xl hover:border-white/10 transition-colors">
+                  <div className="space-y-1">
+                    <p className="font-semibold text-sm text-white">Desktop System Notifications</p>
+                    <p className="text-xs text-warm-ivory/40 max-w-sm">Receive instant OS alert popups on your PC when new customer orders arrive.</p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    {typeof window !== "undefined" && "Notification" in window ? (
+                      notificationPermission === "granted" ? (
+                        <div className="px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          Enabled
+                        </div>
+                      ) : notificationPermission === "denied" ? (
+                        <div className="px-4 py-2 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs font-bold uppercase tracking-wider">
+                          Blocked in Browser
+                        </div>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            const result = await Notification.requestPermission();
+                            if (result === "granted") {
+                              try {
+                                new Notification("🍕 Notifications Enabled", {
+                                  body: "You will now receive desktop notifications for new orders!",
+                                  icon: "/images/logo.jpeg"
+                                });
+                              } catch (e) {
+                                console.error(e);
+                              }
+                            }
+                            setNotificationPermission(result);
+                          }}
+                          className="px-4 py-2.5 bg-primary-red hover:bg-primary-red/90 text-white rounded-xl font-bold text-xs uppercase tracking-wider shadow-[0_4px_15px_rgba(225,29,72,0.2)] transition-all cursor-pointer"
+                        >
+                          Enable Notifications
+                        </button>
+                      )
+                    ) : (
+                      <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-warm-ivory/40 text-xs font-bold uppercase tracking-wider">
+                        Not Supported
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 {/* 2. Seed database */}
                 <div className="flex items-center justify-between p-5 bg-white/[0.02] border border-white/5 rounded-2xl hover:border-white/10 transition-colors">
                   <div className="space-y-1">
@@ -2547,9 +2770,23 @@ CREATE POLICY "Allow public delete" ON public.yolo_orders FOR DELETE USING (true
                   </div>
                   <button
                     onClick={() => { seedMockOrders(); }}
-                    className="px-4 py-2.5 bg-luxury-gold hover:bg-luxury-gold/90 text-deep-black rounded-xl font-bold text-xs uppercase tracking-wider shadow-[0_4px_15px_rgba(212,175,55,0.2)] transition-all shrink-0"
+                    className="px-4 py-2.5 bg-luxury-gold hover:bg-luxury-gold/90 text-deep-black rounded-xl font-bold text-xs uppercase tracking-wider shadow-[0_4px_15px_rgba(212,175,55,0.2)] transition-all shrink-0 cursor-pointer"
                   >
                     Seed Mock Orders
+                  </button>
+                </div>
+
+                {/* Clear Order History */}
+                <div className="flex items-center justify-between p-5 bg-white/[0.02] border border-white/5 rounded-2xl hover:border-white/10 transition-colors">
+                  <div className="space-y-1">
+                    <p className="font-semibold text-sm text-white">Clear Order History</p>
+                    <p className="text-xs text-warm-ivory/40 max-w-sm">Deletes all client order history from both the Supabase cloud database and local fallback caches. Requires passcode confirmation.</p>
+                  </div>
+                  <button
+                    onClick={clearOrderHistory}
+                    className="px-4 py-2.5 bg-primary-red hover:bg-primary-red/90 text-white rounded-xl font-bold text-xs uppercase tracking-wider shadow-[0_4px_15px_rgba(225,29,72,0.2)] transition-all shrink-0 cursor-pointer"
+                  >
+                    Clear Orders
                   </button>
                 </div>
 

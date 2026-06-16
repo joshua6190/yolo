@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Banknote, CreditCard, Smartphone, CheckCircle2, ArrowRight, Copy, Check, MapPin, User, Phone } from "lucide-react";
 import { formatPrice } from "@/lib/menuData";
 import type { PersonOrder, CartItem, DeliveryInfo } from "@/lib/orderTypes";
+import { createClient } from "@/utils/supabase/client";
 
 type PaymentMethod = "cash" | "transfer" | "card";
 
@@ -57,6 +58,36 @@ export default function StepPayment({ tableNumber, persons = [], deliveryCart = 
     mode === "delivery" ? "transfer" : null
   );
   const [copied, setCopied] = useState(false);
+  const [taxRate, setTaxRate] = useState<number>(0);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("yolo_tax_rate");
+      if (stored) {
+        const parsed = parseFloat(stored);
+        if (!isNaN(parsed)) setTaxRate(parsed);
+      }
+    }
+    const fetchLiveSettings = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("yolo_categories")
+          .select("*")
+          .eq("id", "system_settings");
+        
+        if (data && data.length > 0 && !error) {
+          const settings = JSON.parse(data[0].label);
+          if (settings && typeof settings.taxRate === "number") {
+            setTaxRate(settings.taxRate);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load tax rate in StepPayment:", err);
+      }
+    };
+    fetchLiveSettings();
+  }, []);
 
   // Grand total
   const allItems =
@@ -64,7 +95,10 @@ export default function StepPayment({ tableNumber, persons = [], deliveryCart = 
       ? persons.flatMap((p) => p.cart)
       : deliveryCart;
 
-  const grandTotal = allItems.reduce((s, c) => s + c.price * c.quantity, 0);
+  const subtotal = allItems.reduce((s, c) => s + c.price * c.quantity, 0);
+  const activeTaxRate = mode === "delivery" ? taxRate : 0;
+  const taxAmount = parseFloat((subtotal * (activeTaxRate / 100)).toFixed(2));
+  const grandTotal = subtotal + taxAmount;
   const totalItemCount = allItems.reduce((s, c) => s + c.quantity, 0);
 
   const handleCopyAccount = () => {
@@ -144,8 +178,21 @@ export default function StepPayment({ tableNumber, persons = [], deliveryCart = 
         ) : (
           <div className="flex items-center justify-between py-2">
             <p className="text-sm text-warm-ivory/70">{totalItemCount} items</p>
-            <span className="text-sm font-bold text-luxury-gold">{formatPrice(grandTotal)}</span>
+            <span className="text-sm font-bold text-luxury-gold">{formatPrice(subtotal)}</span>
           </div>
+        )}
+
+        {activeTaxRate > 0 && (
+          <>
+            <div className="flex items-center justify-between py-2 border-t border-white/5 mt-3 pt-3 text-xs text-warm-ivory/60">
+              <span>Subtotal</span>
+              <span>{formatPrice(subtotal)}</span>
+            </div>
+            <div className="flex items-center justify-between py-2 text-xs text-warm-ivory/60 font-mono">
+              <span>VAT / Tax ({activeTaxRate}%)</span>
+              <span>{formatPrice(taxAmount)}</span>
+            </div>
+          </>
         )}
 
         <div className="flex items-center justify-between pt-4 mt-3 border-t border-white/10">

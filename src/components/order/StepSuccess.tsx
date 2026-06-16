@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { CheckCircle2, Home, UtensilsCrossed, Bike, Banknote, CreditCard, Smartphone, Copy, Check, MapPin, User, Phone, Printer } from "lucide-react";
+import { CheckCircle2, Home, UtensilsCrossed, Bike, Banknote, CreditCard, Smartphone, Copy, Check, MapPin, User, Phone, Printer, Download, Loader2, X } from "lucide-react";
 import Link from "next/link";
 import { formatPrice } from "@/lib/menuData";
 import type { PersonOrder, CartItem, DeliveryInfo } from "@/lib/orderTypes";
+import { createClient } from "@/utils/supabase/client";
+import html2canvas from "html2canvas-pro";
 
 type PaymentMethod = "cash" | "transfer" | "card";
 
@@ -25,12 +27,49 @@ const paymentLabel = { cash: "Cash", transfer: "Bank Transfer", card: "Card Paym
 
 export default function StepSuccess({ mode, tableNumber, persons = [], deliveryCart = [], deliveryInfo, paymentMethod, orderRef, pin: propPin }: Props) {
   const allItems = mode === "dine-in" ? persons.flatMap((p) => p.cart) : deliveryCart;
-  const grandTotal = allItems.reduce((s, c) => s + c.price * c.quantity, 0);
   const PayIcon = paymentIcon[paymentMethod];
 
   const [pin, setPin] = useState("");
   const [pinCopied, setPinCopied] = useState(false);
   const [orderTime, setOrderTime] = useState("");
+  const [taxRate, setTaxRate] = useState<number>(0);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [generatingImage, setGeneratingImage] = useState<boolean>(false);
+
+  const handleGenerateImage = async () => {
+    setGeneratingImage(true);
+    const element = document.getElementById("receipt-print-area");
+    if (!element) {
+      setGeneratingImage(false);
+      return;
+    }
+
+    element.classList.add("capturing-receipt");
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const canvas = await html2canvas(element, {
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: "#070707",
+        scale: 2.5,
+        scrollX: 0,
+        scrollY: -window.scrollY,
+        windowWidth: document.documentElement.offsetWidth,
+        windowHeight: document.documentElement.offsetHeight
+      });
+
+      const imgData = canvas.toDataURL("image/png");
+      setPreviewImage(imgData);
+    } catch (err) {
+      console.error("Failed to generate receipt image:", err);
+      alert("Failed to create receipt preview. Please try again.");
+    } finally {
+      element.classList.remove("capturing-receipt");
+      setGeneratingImage(false);
+    }
+  };
 
   // Generate a 4-digit confirmation PIN on mount and grab current date/time
   useEffect(() => {
@@ -47,7 +86,39 @@ export default function StepSuccess({ mode, tableNumber, persons = [], deliveryC
         timeStyle: "short",
       })
     );
+
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("yolo_tax_rate");
+      if (stored) {
+        const parsed = parseFloat(stored);
+        if (!isNaN(parsed)) setTaxRate(parsed);
+      }
+    }
+    const fetchLiveSettings = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("yolo_categories")
+          .select("*")
+          .eq("id", "system_settings");
+        
+        if (data && data.length > 0 && !error) {
+          const settings = JSON.parse(data[0].label);
+          if (settings && typeof settings.taxRate === "number") {
+            setTaxRate(settings.taxRate);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load tax rate in StepSuccess:", err);
+      }
+    };
+    fetchLiveSettings();
   }, [propPin]);
+
+  const subtotal = allItems.reduce((s, c) => s + c.price * c.quantity, 0);
+  const activeTaxRate = mode === "delivery" ? taxRate : 0;
+  const taxAmount = parseFloat((subtotal * (activeTaxRate / 100)).toFixed(2));
+  const grandTotal = subtotal + taxAmount;
 
   const handleCopyPin = () => {
     if (pin) {
@@ -114,6 +185,48 @@ export default function StepSuccess({ mode, tableNumber, persons = [], deliveryC
           #receipt-print-area .no-print {
             display: none !important;
           }
+        }
+
+        /* html2canvas capturing specific styles */
+        .capturing-receipt, .capturing-receipt * {
+          text-shadow: none !important;
+          box-shadow: none !important;
+        }
+        .capturing-receipt .glass-card {
+          background-color: #121214 !important;
+          border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+        .capturing-receipt .text-luxury-gold, 
+        .capturing-receipt .text-neon-gold {
+          color: #d4af37 !important;
+        }
+        .capturing-receipt .text-primary-red {
+          color: #e11d48 !important;
+        }
+        .capturing-receipt .text-warm-ivory\\/70 {
+          color: #b3b1ad !important;
+        }
+        .capturing-receipt .text-warm-ivory\\/55,
+        .capturing-receipt .text-warm-ivory\\/50,
+        .capturing-receipt .text-warm-ivory\\/40 {
+          color: #8c8a87 !important;
+        }
+        .capturing-receipt .hidden.print\\:flex {
+          display: flex !important;
+        }
+        .capturing-receipt .hidden.print\\:block {
+          display: block !important;
+        }
+        .capturing-receipt .no-print {
+          display: none !important;
+        }
+        .capturing-receipt {
+          background: #070707 !important;
+          padding: 24px !important;
+          border: 1px solid rgba(255, 255, 255, 0.08) !important;
+          border-radius: 24px !important;
+          width: 450px !important;
+          max-width: 450px !important;
         }
       `}</style>
 
@@ -248,6 +361,22 @@ export default function StepSuccess({ mode, tableNumber, persons = [], deliveryC
                   </span>
                 </div>
               )}
+              {activeTaxRate > 0 && (
+                <>
+                  <div className="flex items-center justify-between text-sm border-t border-white/5 pt-3">
+                    <span className="text-warm-ivory/50">Subtotal</span>
+                    <span className="font-semibold text-white text-xs">
+                      {formatPrice(subtotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm border-t border-white/5 pt-3 font-mono">
+                    <span className="text-warm-ivory/50">Tax / VAT ({activeTaxRate}%)</span>
+                    <span className="font-semibold text-white text-xs">
+                      {formatPrice(taxAmount)}
+                    </span>
+                  </div>
+                </>
+              )}
               <div className="flex items-center justify-between text-sm border-t border-white/5 pt-3">
                 <span className="text-warm-ivory/50">Grand Total</span>
                 <span className="font-serif font-bold text-luxury-gold text-base text-neon-gold">
@@ -328,12 +457,39 @@ export default function StepSuccess({ mode, tableNumber, persons = [], deliveryC
 
         {/* Screen-Only Button Actions */}
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-8">
-          <button
-            onClick={() => window.print()}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-3.5 bg-luxury-gold hover:bg-luxury-gold/90 text-deep-black rounded-full font-bold uppercase tracking-wider text-xs transition-all duration-300 hover:scale-105 shadow-[0_4px_25px_rgba(212,175,55,0.25)] cursor-pointer"
-          >
-            <Printer className="w-4 h-4" /> Download PDF Receipt
-          </button>
+          {mode === "delivery" ? (
+            <button
+              onClick={handleGenerateImage}
+              disabled={generatingImage}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-3.5 bg-luxury-gold hover:bg-luxury-gold/90 text-deep-black rounded-full font-bold uppercase tracking-wider text-xs transition-all duration-300 hover:scale-105 shadow-[0_4px_25px_rgba(212,175,55,0.25)] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {generatingImage ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" /> Generating...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" /> Save Receipt Image
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={() => window.print()}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-8 py-3.5 bg-luxury-gold hover:bg-luxury-gold/90 text-deep-black rounded-full font-bold uppercase tracking-wider text-xs transition-all duration-300 hover:scale-105 shadow-[0_4px_25px_rgba(212,175,55,0.25)] cursor-pointer"
+            >
+              <Printer className="w-4 h-4" /> Download PDF Receipt
+            </button>
+          )}
+
+          {mode === "delivery" && (
+            <button
+              onClick={() => window.print()}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-white/5 hover:bg-white/10 text-warm-ivory border border-white/10 rounded-full font-semibold uppercase tracking-wider text-xs transition-all duration-300 hover:scale-105"
+            >
+              <Printer className="w-4 h-4" /> PDF Print
+            </button>
+          )}
 
           <Link
             href="/"
@@ -343,6 +499,57 @@ export default function StepSuccess({ mode, tableNumber, persons = [], deliveryC
           </Link>
         </div>
       </motion.div>
+
+      {/* Receipt Image Preview Modal */}
+      {previewImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+          <div className="relative w-full max-w-md bg-zinc-950 border border-white/10 rounded-3xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto flex flex-col items-center">
+            
+            {/* Close button */}
+            <button
+              onClick={() => setPreviewImage(null)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-white/5 hover:bg-white/10 text-warm-ivory/70 hover:text-white transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <h3 className="font-serif text-xl font-bold text-white mt-2 mb-1">
+              Receipt Preview
+            </h3>
+            
+            <p className="text-[10px] text-warm-ivory/55 text-center max-w-xs mb-4">
+              On mobile devices, <strong className="text-luxury-gold">tap and hold (long-press)</strong> the image to save directly to your photos.
+            </p>
+
+            {/* Rendered Image */}
+            <div className="w-full overflow-hidden rounded-2xl border border-white/5 bg-zinc-900 flex justify-center items-center my-3 p-1">
+              <img
+                src={previewImage}
+                alt="YOLO Bites Order Receipt"
+                className="w-full max-h-[50vh] object-contain rounded-xl shadow-lg"
+              />
+            </div>
+
+            {/* Action buttons inside modal */}
+            <div className="w-full space-y-2 mt-4">
+              <a
+                href={previewImage}
+                download={`yolo-receipt-${orderRef}.png`}
+                className="w-full py-3.5 bg-luxury-gold hover:bg-luxury-gold/90 text-deep-black rounded-xl font-bold uppercase tracking-wider text-xs flex items-center justify-center gap-2 cursor-pointer transition shadow-[0_4px_15px_rgba(212,175,55,0.2)] text-center"
+              >
+                <Download className="w-4 h-4" /> Download to Device
+              </a>
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="w-full py-3 bg-white/5 hover:bg-white/10 text-warm-ivory rounded-xl font-semibold uppercase tracking-wider text-xs transition cursor-pointer"
+              >
+                Close Preview
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }
